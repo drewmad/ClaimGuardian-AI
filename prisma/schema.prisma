@@ -1,0 +1,229 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum InsuranceType {
+  HOME
+  AUTO
+  HEALTH
+  LIFE
+  PROPERTY
+  LIABILITY
+  OTHER
+}
+
+enum ClaimStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  PAID
+  CLOSED
+}
+
+enum DocumentType {
+  POLICY
+  CLAIM
+  IDENTITY
+  PROOF_OF_LOSS
+  ESTIMATE
+  INVOICE
+  RECEIPT
+  PHOTO
+  OTHER
+}
+
+enum Role {
+  USER
+  ADMIN
+  AGENT
+  MANAGER
+  ADJUSTER
+}
+
+enum NotificationType {
+  CLAIM_STATUS_CHANGE
+  POLICY_EXPIRY
+  DOCUMENT_UPLOAD
+  PAYMENT_REMINDER
+  SYSTEM_ALERT
+  SECURITY_ALERT
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  BOTH
+}
+
+model User {
+  id            String           @id @default(cuid())
+  name          String?
+  email         String           @unique
+  password      String
+  
+  // Role and permissions
+  role          Role             @default(USER)
+  permissions   String[]         @default([])
+  
+  // Email verification fields
+  emailVerified         DateTime?
+  verificationToken     String?
+  verificationExpires   DateTime?
+  
+  // MFA fields
+  mfaEnabled    Boolean          @default(false)
+  mfaSecret     String?
+  mfaVerified   Boolean          @default(false)
+  
+  // Password policy fields
+  passwordLastChanged   DateTime       @default(now())
+  passwordHistory       String[]       @default([])
+  passwordResetToken    String?
+  passwordResetExpires  DateTime?
+  failedLoginAttempts   Int            @default(0)
+  lockoutUntil          DateTime?
+  
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  policies      InsurancePolicy[]
+  claims        Claim[]
+  documents     Document[]
+  sessions      Session[]
+  notifications Notification[]
+  notificationPreference NotificationPreference?
+}
+
+model InsurancePolicy {
+  id              String         @id @default(cuid())
+  policyNumber    String         @unique
+  userId          String
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  insuranceType   InsuranceType
+  provider        String
+  coverageAmount  Decimal
+  premium         Decimal
+  startDate       DateTime
+  endDate         DateTime
+  isActive        Boolean        @default(true)
+  description     String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  claims          Claim[]
+  documents       Document[]     @relation("PolicyDocuments")
+  
+  @@index([userId])
+}
+
+model Claim {
+  id                String        @id @default(cuid())
+  claimNumber       String        @unique
+  userId            String
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  policyId          String
+  policy            InsurancePolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  status            ClaimStatus   @default(DRAFT)
+  incidentDate      DateTime
+  reportDate        DateTime      @default(now())
+  description       String
+  damageAmount      Decimal?
+  approvedAmount    Decimal?
+  rejectionReason   String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  documents         Document[]    @relation("ClaimDocuments")
+  
+  @@index([userId])
+  @@index([policyId])
+}
+
+model Document {
+  id              String         @id @default(cuid())
+  fileName        String
+  fileKey         String         @unique // S3 object key
+  fileType        String         // MIME type
+  fileSize        Int            // Size in bytes
+  documentType    DocumentType
+  uploadDate      DateTime       @default(now())
+  description     String?
+  
+  // Relations
+  userId          String
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Optional relations
+  policyId        String?
+  policy          InsurancePolicy? @relation("PolicyDocuments", fields: [policyId], references: [id])
+  
+  claimId         String?
+  claim           Claim?         @relation("ClaimDocuments", fields: [claimId], references: [id])
+  
+  // Extracted data (if document was analyzed)
+  extractedData   Json?         // Extracted text and data points
+  isAnalyzed      Boolean       @default(false)
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  @@index([userId])
+  @@index([policyId])
+  @@index([claimId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Enhanced session management fields
+  ipAddress    String?
+  userAgent    String?
+  deviceInfo   String?
+  lastActive   DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  @@index([userId])
+}
+
+model Notification {
+  id              String            @id @default(cuid())
+  userId          String
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type            NotificationType
+  title           String
+  message         String
+  link            String?
+  isRead          Boolean           @default(false)
+  createdAt       DateTime          @default(now())
+  
+  @@index([userId])
+}
+
+model NotificationPreference {
+  id              String             @id @default(cuid())
+  userId          String             @unique
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Notification preferences by type
+  claimStatus     NotificationChannel @default(BOTH)
+  policyExpiry    NotificationChannel @default(BOTH)
+  documentUpload  NotificationChannel @default(IN_APP)
+  paymentReminder NotificationChannel @default(BOTH)
+  systemAlert     NotificationChannel @default(IN_APP)
+  securityAlert   NotificationChannel @default(BOTH)
+  
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+} 
